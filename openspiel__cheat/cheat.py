@@ -202,6 +202,10 @@ class CheatState(pyspiel.State):
                         ]
                         for card_no in legal_nums
                     )
+                """
+                Bit twiddling hack from:
+                https://graphics.stanford.edu/~seander/bithacks.html#NextBitPermutation
+                """
                 t = (v | (v - 1)) + 1
                 v = t | ((((t & -t) // (v & -v)) >> 1) - 1)
 
