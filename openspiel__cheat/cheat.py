@@ -4,9 +4,48 @@ import pyspiel
 import math
 
 """
-Game details:
+Game details found here:
 https://en.wikipedia.org/wiki/Cheat_(game)
+
+Rules are modified so that:
+- Each successive card must match or increase the rank by one.
+- Whenever the pile is empty, either at the start of the game
+  or after a successful accusation, the first player can choose
+  to put any number (as opposed to always starting with aces).
+
+Design choices:
+- In practice, multiple players can accuse at the same time, but
+  only the first one to do so follows through with their
+  accusation. A possibility here is to add a confidence score
+  together with the accusation to rank them. However, in this
+  discrete setting, we opt instead to randomly choose a player out
+  of all the accusers.
+- Rather than reward agents only once they win the game, we
+  note that working with imperfect information together with the
+  stochasticity of choosing the accuser will result in some noise.
+  So, to have a stable reward signal, we consider the scenarios:
+  - When an agent makes an accusation,
+    - Reward if the last player lied.
+    - Penalise if the last player told the truth.
+    (proportional to the number of cards on the pile)
+  - When an agent does not make an accusation,
+    - Reward if the last player told the truth.
+    - Penalise if the last player told a lie.
+    (proportional to the number of cards put by the last player)
+  - When an agent puts down cards onto the pile,
+    - Reward if they lie and get away with it.
+    - Reward if they tell the truth and get wrongly accused.
+    (proportional to the number of cards they put)
+    - Penalise if they lie and get caught.
+    (proportional to the number of cards on the pile)
+- Agents keep track, in their observation tensor, how many cards
+  other players have claimed to have put on the pile. If they
+  claim to have put down more than four (the number of suites),
+  then the "five or more times" indicator bit is set instead.
+- Games can technically last forever so a maximum number of turns
+  was established, and the player with fewer cards at the end wins.
 """
+
 
 class Action(enum.IntEnum):
     ACCUSE = 0
@@ -58,6 +97,9 @@ _GAME_TYPE = pyspiel.GameType(
     reward_model=pyspiel.GameType.RewardModel.REWARDS,
     max_num_players=_MAX_NUM_PLAYERS,
     min_num_players=_MIN_NUM_PLAYERS,
+    parameter_specification={
+        "players": _MIN_NUM_PLAYERS,
+    },
     provides_information_state_string=True,
     provides_information_state_tensor=True,
     provides_observation_string=True,
@@ -65,24 +107,27 @@ _GAME_TYPE = pyspiel.GameType(
     provides_factored_observation_string=True,
 )
 
-_GAME_INFO = pyspiel.GameInfo(
-    num_distinct_actions=len(_ENCODE_ACTION),
-    max_chance_outcomes=_MIN_NUM_PLAYERS * _MIN_FACTOR_NON_AMBIGUOUS,
-    num_players=_MIN_NUM_PLAYERS,
-    min_utility=-1.0,
-    max_utility=1.0,
-    utility_sum=0.0,
-    max_game_length=_MAX_GAME_LENGTH,
-)
+
+def get_game_info(num_players=_MIN_NUM_PLAYERS):
+    _GAME_INFO = pyspiel.GameInfo(
+        num_distinct_actions=len(_ENCODE_ACTION),
+        max_chance_outcomes=num_players * _MIN_FACTOR_NON_AMBIGUOUS,
+        num_players=num_players,
+        min_utility=-1.0,
+        max_utility=1.0,
+        utility_sum=0.0,
+        max_game_length=_MAX_GAME_LENGTH,
+    )
+    return _GAME_INFO
 
 
 class CheatGame(pyspiel.Game):
     """A Python version of Cheat."""
 
     def __init__(self, params=None):
-        super().__init__(_GAME_TYPE, _GAME_INFO, params or dict())
-        game_parameters = self.get_parameters()
-        self._num_players = game_parameters.get("num_players", _MIN_NUM_PLAYERS)
+        self._num_players = params.get("players", _MIN_NUM_PLAYERS)
+        GAME_INFO = get_game_info(self._num_players)
+        super().__init__(_GAME_TYPE, GAME_INFO, params or dict())
 
     def new_initial_state(self):
         """Returns a state corresponding to the start of a game."""
